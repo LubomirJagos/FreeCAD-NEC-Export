@@ -1,0 +1,138 @@
+from PySide import QtGui, QtCore
+import FreeCAD as App
+import FreeCADGui, Part, os
+import re
+import numpy as np
+
+#import needed local classes
+import sys
+
+currentDir = os.path.dirname(FreeCAD.ActiveDocument.FileName)
+print(f"Working dir: {currentDir}")
+
+#
+#	First get current selected object
+#
+currentObj = FreeCADGui.Selection.getSelection()[0]
+
+#
+#	OUTPUT VARIABLES
+#
+wiresList = []
+outputGeometryStr = "CM --- NEC2 Input File created or edited by FreeCAD NEC export plugin by LuboJ. ---\n"
+outputGeometryStr += "CE\n"
+
+def processMesh():
+	global wiresList, outputGeometryStr
+
+	#
+	#	This continues for Facest
+	#
+	for k in range(len(currentObj.Mesh.Facets)):
+		facetObj = currentObj.Mesh.Facets[k]
+	
+		#there are 3 points for each facet becasue it's triangle so this is going through all 3 wires of it
+		for m in range(3):
+			x1,y1,z1 = facetObj.Points[m]
+			x2,y2,z2 = facetObj.Points[m-1]
+		
+			#order points based on rules (top is overriding bottom):
+			#	1. less X coord if different
+			#	2. less Y coord if different
+			#	3. less Z coord if different
+			normalPointOrder = True
+			if (x1 != x2):
+				normalPointOrder = min(x1,x2) == x1
+			else:
+				if (y1 != y2): 
+					normalPointOrder = min(y1,y2) == y1
+				else:
+					if (z1 != z2): 
+						normalPointOrder = min(z1,z2) == z1
+					else:
+						normalPointOrder = None
+	
+			if normalPointOrder and normalPointOrder is not None:
+				wireSpec = [x1,y1,z1,x2,y2,z2]
+			else:
+				wireSpec = [x2,y2,z2,x1,y1,z1]
+		
+			#append wire element if not already in array
+			#this is so fucked but for testing small models it's ok
+			#if wireSpec not in wiresList:
+			wiresList.append(wireSpec)
+	
+	def unique_rows(a):
+	    a = np.ascontiguousarray(a)
+	    unique_a = np.unique(a.view([('', a.dtype)]*a.shape[1]))
+	    return unique_a.view(a.dtype).reshape((unique_a.shape[0], a.shape[1]))
+	
+	wiresList = unique_rows(np.array(wiresList))
+	#print(wiresList)
+	
+	wireRadius = "0.001e-3"
+	wireIndex = 1
+	for wire in wiresList:
+		x1,y1,z1,x2,y2,z2= wire
+	
+		#outputGeometryStr += f"GW    {wireIndex}    1    {x1}    {y1}    {z1}    {x2}    {y2}    {z2}    {wireRadius}\n"
+		outputGeometryStr += f"GW    {wireIndex}    1    {round(x1,5)}    {round(y1,5)}    {round(z1,5)}    {round(x2,5)}    {round(y2,5)}    {round(z2,5)}    {wireRadius}\n"
+		wireIndex += 1
+		
+	print(outputGeometryStr)
+	print("Check")
+	print(f"Generated wires count: {wireIndex - 1}")
+	print(f"Mesh edges count: {currentObj.Mesh.CountEdges}")
+
+def processFace():
+	#
+	#	This is for Face selection - IN DEVELOPMENT
+	#
+	global wiresList, outputGeometryStr
+
+	wireRadius = "0.001e-3"
+	wireIndex = 1
+	for k in range(len(currentObj.Shape.Edges)):
+		x1 = currentObj.Shape.Edges[k].Vertexes[0].X
+		y1 = currentObj.Shape.Edges[k].Vertexes[0].Y
+		z1 = currentObj.Shape.Edges[k].Vertexes[0].Z
+		
+		x2 = currentObj.Shape.Edges[k].Vertexes[1].X
+		y2 = currentObj.Shape.Edges[k].Vertexes[1].Y
+		z2 = currentObj.Shape.Edges[k].Vertexes[1].Z
+
+		outputGeometryStr += f"GW    {wireIndex}    1    {round(x1,5)}    {round(y1,5)}    {round(z1,5)}    {round(x2,5)}    {round(y2,5)}    {round(z2,5)}    {wireRadius}\n"
+		wireIndex += 1
+
+	print("Check")
+	print(f"Generated wires count: {wireIndex - 1}")
+	print(f"Face edges count: {len(currentObj.Shape.Edges)}")
+
+#check if selected Mesh
+if re.search('Mesh.Feature', str(type(currentObj))) != None:
+	print("Selected object is Mesh.Feature")
+	outFilePath = f"{currentDir}/outputMesh.nec"
+	processMesh()
+elif re.search('Part.Feature', str(type(currentObj))) != None:
+	print("Probably Face found")
+	outFilePath = f"{currentDir}/outputFace.nec"
+	processFace()
+else:
+	print("Cannot do anything")
+	print("Type of selected object: " + str(currentObj))
+	exit(-1)
+
+#
+#	Finish geometry
+#
+outputGeometryStr += "GE     0     0     0      0  0.00000E+00  0.00000E+00  0.00000E+00  0.00000E+00  0.00000E+00  0.00000E+00\n"
+outputGeometryStr += "EN     0     0     0      0  0.00000E+00  0.00000E+00  0.00000E+00  0.00000E+00  0.00000E+00  0.00000E+00\n"
+
+#
+#Write to output file .NEC format
+#
+print(f"File written into {outFilePath}")
+outFile = open(outFilePath, "w+")
+outFile.write(outputGeometryStr)
+outFile.close()
+
